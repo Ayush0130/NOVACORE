@@ -1,0 +1,3 @@
+C:/Users/ayush/Documents/NovaCore/build/CMakeFiles/NovaCore.dir
+C:/Users/ayush/Documents/NovaCore/build/CMakeFiles/edit_cache.dir
+C:/Users/ayush/Documents/NovaCore/build/CMakeFiles/rebuild_cache.dir
