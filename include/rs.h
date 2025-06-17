@@ -13,6 +13,9 @@ struct RSEntry {
     OpType op;
     int Vj, Vk;
     int Qj, Qk;
+
+    float fVj,fVk;
+    bool isfloat;
     int destROB;
     int A;
     bool executed;

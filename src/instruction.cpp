@@ -8,7 +8,13 @@
 Instruction::Instruction() : op(OpType::NOP), rd(0), rs1(0), rs2(0), imm(0) {}
 
 static int parseReg(const std::string& tok) {
-    if (tok.empty() || tok[0] != 'x') throw std::invalid_argument("Invalid register");
+    if (tok.empty()) throw std::invalid_argument("Empty register name");
+    
+    // Allow both 'x' and 'f' register prefixes
+    if (tok[0] != 'x' && tok[0] != 'f') {
+        throw std::invalid_argument("Invalid register prefix: " + tok);
+    }
+    
     return std::stoi(tok.substr(1));
 }
 
@@ -22,7 +28,8 @@ Instruction::Instruction(const std::string& line) : rd(0), rs1(0), rs2(0), imm(0
         {"mul",OpType::MUL}, 
         {"div",OpType::DIV},
         {"lw",OpType::LD},  
-         {"sw",OpType::ST}
+         {"sw",OpType::ST},
+         {"fadd",OpType::FADD},
     };
     auto it = map.find(opc);
     if (it==map.end()) { 
@@ -31,13 +38,15 @@ Instruction::Instruction(const std::string& line) : rd(0), rs1(0), rs2(0), imm(0
         std::cout<<"Invalid Opcode: "<<opc<<"\n";
         return; 
     }
+    std::cout<<"debug opcode: "<<opc<<"\n";
     op = it->second;
     std::string rest;
     getline(iss, rest);
     for (char& c: rest) if (c==',') c=' ';
     std::istringstream args(rest);
 
-    if (op==OpType::ADD||op==OpType::SUB||op==OpType::MUL||op==OpType::DIV) {
+    if (op==OpType::ADD||op==OpType::SUB||op==OpType::MUL||op==OpType::DIV || op==OpType::FADD) {
+        std::cout<<"debug args: "<<rest<<"\n";
         std::string a,b,c;
         args>>a>>b>>c;
         rd=parseReg(a); rs1=parseReg(b); rs2=parseReg(c);

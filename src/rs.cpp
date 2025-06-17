@@ -4,11 +4,28 @@
 #include <tuple>
 
 RS::RS(int n, CDB& cdb) : entries(n) {
-    for (auto& e: entries) e.busy=false;
-    cdb.subscribe([this](int tag,int val){
+    for (auto& e: entries) {
+        e.busy=false;
+        e.isfloat=false;
+    }
+    cdb.subscribe([this](int tag,int val,bool isfloat) {
         for (auto& e: entries) if (e.busy) {
-            if (e.Qj==tag) { e.Vj=val; e.Qj=-1; }
-            if (e.Qk==tag) { e.Vk=val; e.Qk=-1; }
+             if (e.Qj == tag) { 
+                if (!isfloat) {
+                    e.Vj = val; 
+                } else {
+                    e.fVj = *reinterpret_cast<float*>(&val);
+                }
+                e.Qj = -1; 
+            }
+            if (e.Qk == tag) { 
+                if (!isfloat) {
+                    e.Vk = val;
+                } else {
+                    e.fVk = *reinterpret_cast<float*>(&val);
+                }
+                e.Qk = -1; 
+            }
         }
     });
 }
@@ -24,32 +41,105 @@ void RS::issue(int idx, const Instruction& inst, RAT& rat, CPU& cpu, ROB& rob) {
     e.busy = true;
     e.executed = false;
     e.op = inst.op;
-    e.destROB = rob.allocate(inst.op==OpType::ST ? -1 : inst.rd);
+    e.isfloat = (inst.op == OpType::FADD);  // Set flag for FP operation
+    
+    // Allocate ROB entry with proper floating-point flag
+    if (e.isfloat) {
+        e.destROB = rob.allocate(inst.rd, true);
+    } else {
+        e.destROB = rob.allocate(inst.op == OpType::ST ? -1 : inst.rd);
+    }
+    
+    // Initialize values
     e.A = 0;
     e.Vj = e.Vk = 0;
+    e.fVj = e.fVk = 0.0f;
     e.Qj = e.Qk = -1;
-    
-    // Initialize new fields:
     e.execute_cycles_left = 0;
     e.ready_for_broadcast = false;
-
-    if (inst.op==OpType::LD||inst.op==OpType::ST)
-        e.A = cpu.read(inst.rs1) + inst.imm;
-
-    // src1
-    int t1 = rat.get(inst.rs1);
-    if (t1>=0) { e.Qj=t1; } else { e.Vj=cpu.read(inst.rs1); e.Qj=-1; }
-
-    // src2
-    int reg2 = inst.rs2;  // Store always uses rs2, so no need for conditional
-    if (inst.op==OpType::ADD||inst.op==OpType::SUB||inst.op==OpType::MUL
-     ||inst.op==OpType::DIV||inst.op==OpType::ST) {
-        int t2 = rat.get(reg2);
-        if (t2>=0) { e.Qk=t2; } else { e.Vk=cpu.read(reg2); e.Qk=-1; }
-    } else { e.Qk=-1; e.Vk=0; }
-
-    if (inst.op!=OpType::ST)
+    
+    // CRITICAL: Handle dependency checking correctly based on instruction type
+    if (e.isfloat) {
+        // Floating-point operation dependencies
+        int t1 = rat.getF(inst.rs1);
+        if (t1 >= 0) {
+            e.Qj = t1;
+        } else {
+            e.fVj = cpu.fread(inst.rs1);
+            e.Qj = -1;
+        }
+        
+        int t2 = rat.getF(inst.rs2);
+        if (t2 >= 0) {
+            e.Qk = t2;
+        } else {
+            e.fVk = cpu.fread(inst.rs2);
+            e.Qk = -1;
+        }
+        rat.setF(inst.rd, e.destROB);  // Update RAT for floating-point register
+    }
+    else if (inst.op == OpType::LD || inst.op == OpType::ST) {
+        // Memory operation dependencies
+        e.A = inst.imm;
+        
+        int t1 = rat.get(inst.rs1);
+        if (t1 >= 0) {
+            e.Qj = t1;
+        } else {
+            e.Vj = cpu.read(inst.rs1);
+            e.Qj = -1;
+            e.A += e.Vj;
+        }
+        
+        if (inst.op == OpType::ST) {
+            int t2 = rat.get(inst.rs2);
+            if (t2 >= 0) {
+                e.Qk = t2;
+            } else {
+                e.Vk = cpu.read(inst.rs2);
+                e.Qk = -1;
+            }
+        } else {
+            e.Qk = -1;
+        }
+    }
+    else {
+        // Integer ALU operation dependencies
+        int t1 = rat.get(inst.rs1);
+        if (t1 >= 0) {
+            e.Qj = t1;
+        } else {
+            e.Vj = cpu.read(inst.rs1);
+            e.Qj = -1;
+        }
+        
+        int t2 = rat.get(inst.rs2);
+        if (t2 >= 0) {
+            e.Qk = t2;
+        } else {
+            e.Vk = cpu.read(inst.rs2);
+            e.Qk = -1;
+        }
+    }
+    
+    // Update RAT
+    if (inst.op != OpType::ST) {
         rat.set(inst.rd, e.destROB);
+    }
+    
+    // Debug output
+    std::cout << "Issue: ";
+    switch(inst.op) {
+        case OpType::ADD: std::cout << "ADD"; break;
+        case OpType::SUB: std::cout << "SUB"; break;
+        case OpType::MUL: std::cout << "MUL"; break;
+        case OpType::DIV: std::cout << "DIV"; break;
+        case OpType::LD:  std::cout << "LOAD"; break;
+        case OpType::ST:  std::cout << "STORE"; break;
+        case OpType::FADD: std::cout << "FADD"; break;
+        default: std::cout << "NOP"; break;
+    }
+    std::cout << " to RS[" << idx << "]" << std::endl;
 }
 
 void RS::execute(CDB& cdb, Memory& mem, ROB& rob) {
@@ -57,7 +147,7 @@ void RS::execute(CDB& cdb, Memory& mem, ROB& rob) {
         if (e.busy && !e.executed && !e.ready_for_broadcast && e.Qj<0 && e.Qk<0) {
             if (e.execute_cycles_left == 0) {
                 // First cycle of execution - initialize
-                e.execute_cycles_left = getExecutionLatency(e.op);
+                e.execute_cycles_left = getExecutionLatency(e.op); // new execution latency of next process
                 std::cout << "Starting execution of ";
                 switch(e.op) {
                     case OpType::ADD: std::cout << "ADD"; break;
@@ -66,6 +156,7 @@ void RS::execute(CDB& cdb, Memory& mem, ROB& rob) {
                     case OpType::DIV: std::cout << "DIV"; break;
                     case OpType::LD:  std::cout << "LOAD"; break;
                     case OpType::ST:  std::cout << "STORE"; break;
+                    case OpType::FADD: std::cout << "FADD"; break;
                     default: std::cout << "NOP"; break;
                 }
                 std::cout << ", " << e.execute_cycles_left << " cycles remaining" << std::endl;
@@ -73,6 +164,16 @@ void RS::execute(CDB& cdb, Memory& mem, ROB& rob) {
             else if (e.execute_cycles_left == 1) {
                 // Last cycle of execution - compute result and mark ready for CDB
                 int res = 0;
+
+                 if(e.op== OpType::FADD) {
+                    float res=e.fVj + e.fVk;
+                   std::cout<<"float Execution complete, Vj="<<e.fVj<<", Vk="<<e.fVk<<", res="<<res<<"\n";
+                   //std::cout << "float Execution complete, result=" << res << ", ready for CDB" << std::endl;
+                e.execute_cycles_left = 0;
+                e.ready_for_broadcast = true;
+                  e.fVj = res;
+                continue;
+                 }
                 switch(e.op) {
                     case OpType::ADD: res=e.Vj+e.Vk; break;
                     case OpType::SUB: res=e.Vj-e.Vk; break;
@@ -108,7 +209,6 @@ void RS::execute(CDB& cdb, Memory& mem, ROB& rob) {
 }
 
 void RS::broadcastResult(CDB& cdb, ROB& rob) {
-    // Choose one ready instruction for CDB (priority by ROB order)
     int earliest_rob = -1;
     RSEntry* selected = nullptr;
     
@@ -122,15 +222,30 @@ void RS::broadcastResult(CDB& cdb, ROB& rob) {
         }
     }
     
-    // Broadcast the selected result
     if (selected) {
-        int result = selected->Vj;  // We stored result in Vj
-        
-        if (selected->op != OpType::ST) {
-            std::cout << "Broadcasting result " << result << " from ROB " << selected->destROB << std::endl;
-            rob.markReady(selected->destROB, result);
-            cdb.broadcast(selected->destROB, result);
-        } else {
+        // Handle based on instruction type
+        if (selected->isfloat) {
+            // This is a float operation
+            float fres = selected->fVj;  // Result was stored in fVj
+            
+            std::cout << "Broadcasting float result " << fres 
+                     << " from ROB " << selected->destROB << std::endl;
+            
+            rob.markReadyFloat(selected->destROB, fres);
+            cdb.broadcastFloat(selected->destROB, fres);
+        }
+        else if (selected->op != OpType::ST) {
+            // Integer operation
+            int res = selected->Vj;  // Result was stored in Vj
+            
+            std::cout << "Broadcasting int result " << res 
+                     << " from ROB " << selected->destROB << std::endl;
+            
+            rob.markReady(selected->destROB, res);
+            cdb.broadcast(selected->destROB, res);
+        }
+        else {
+            // Store operation
             std::cout << "Store complete, marking ROB " << selected->destROB << " as ready" << std::endl;
             rob.markReady(selected->destROB, 0);
         }
@@ -150,6 +265,7 @@ int RS::getExecutionLatency(OpType op) {
         case OpType::DIV: return 7;  
         case OpType::LD:  return 2;  
         case OpType::ST:  return 2;  
+        case OpType::FADD: return 4;
         default:          return 1;
     }
 }

@@ -8,7 +8,12 @@
 
 struct ROBEntry {
     int destArch;
-    int value;
+
+    union {
+        int value;
+        float fvalue;
+    };
+    bool isfloat;
     bool ready;
 };
 
@@ -17,8 +22,9 @@ public:
     ROB(int capacity);
     bool isFull() const;
     bool isEmpty() const { return count == 0; }
-    int allocate(int destArch);
     void markReady(int idx, int value);
+    void markReadyFloat(int idx,float value);
+    int allocate(int destArch,bool isfloat=false);
     void commit(CPU& cpu, RAT& rat, CDB& cdb);
 private:
     int head, tail, count;

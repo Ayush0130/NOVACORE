@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
 
-enum class OpType { ADD, SUB, MUL, DIV, LD, ST, NOP };
+enum class OpType { ADD, SUB, MUL, DIV, LD, ST, FADD, NOP };
 
 struct Instruction {
     OpType op;

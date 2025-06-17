@@ -9,17 +9,23 @@ ROB::ROB(int capacity)
 
 bool ROB::isFull() const { return count == (int)buffer.size(); }
 
-int ROB::allocate(int destArch) {
+int ROB::allocate(int destArch, bool isfloat) {
     if (isFull()) {
         throw std::runtime_error("ROB full");
         // std::cout << "ROB full" << std::endl;
         // return -1;
     }
     int idx = tail;
-    buffer[tail] = {destArch, 0, false};
+    buffer[tail] = {destArch, 0,isfloat, false};
     tail = (tail+1) % buffer.size();
     ++count;
     return idx;
+}
+
+void ROB::markReadyFloat(int idx, float value) {
+    buffer[idx].fvalue = value;
+    buffer[idx].isfloat = true;
+    buffer[idx].ready = true;
 }
 
 void ROB::markReady(int idx, int value) {
@@ -35,21 +41,36 @@ void ROB::commit(CPU& cpu, RAT& rat, CDB& cdb) {
     
     auto& entry = buffer[head];
     std::cout << "ROB head=" << head << " ready=" << entry.ready 
-              << " destArch=" << entry.destArch 
-              << " value=" << entry.value << std::endl;
-              
+              << " destArch=" << entry.destArch;
+    
+    if (entry.isfloat) {
+        std::cout << " fvalue=" << entry.fvalue << std::endl;
+    } else {
+        std::cout << " value=" << entry.value << std::endl;
+    }
+    
     if (entry.ready) {
         if (entry.destArch >= 0) {
-            std::cout << "Committing x" << entry.destArch << " = " << entry.value << std::endl;
-            cpu.write(entry.destArch, entry.value);
-            
-            // Clear RAT if this ROB entry is still mapped
-            if (rat.get(entry.destArch) == head) {
-                std::cout << "Clearing RAT for x" << entry.destArch << std::endl;
-                rat.set(entry.destArch, -1);
+            if (!entry.isfloat) {
+                std::cout << "Committing x" << entry.destArch << " = " << entry.value << std::endl;
+                cpu.write(entry.destArch, entry.value);
                 
-                // Broadcast again to ensure all dependencies are resolved
-                cdb.broadcast(head, entry.value);
+                // Broadcast again for integer values to ensure dependencies are resolved
+                if (rat.get(entry.destArch) == head) {
+                    std::cout << "Clearing RAT for x" << entry.destArch << std::endl;
+                    rat.set(entry.destArch, -1);
+                    cdb.broadcast(head, entry.value);
+                }
+            } else {
+                std::cout << "Committing f" << entry.destArch << " = " << entry.fvalue << std::endl;
+                cpu.fwrite(entry.destArch, entry.fvalue);
+                
+                // Broadcast again for float values
+                if (rat.getF(entry.destArch) == head) {
+                    std::cout << "Clearing RAT for f" << entry.destArch << std::endl;
+                    rat.setF(entry.destArch, -1);
+                    cdb.broadcastFloat(head, entry.fvalue);
+                }
             }
         }
         
