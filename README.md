@@ -1,4 +1,4 @@
-# NovaCore: Out‑of‑Order RISC‑V Simulator (Tomasulo)
+# NovaCore: Out‑of‑Order RISC‑V Simulator (Tomasulo Algorithm)
 
 ## Overview
 NovaCore is a C++ simulator that implements out‑of‑order execution using Tomasulo’s algorithm.  
